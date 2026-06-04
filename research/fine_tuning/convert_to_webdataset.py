@@ -39,6 +39,12 @@ def _get_image(image_path: Path) -> Image.Image | None:
     return image
 
 
+def _normalize_taxon_key(value) -> str | None:
+    if pd.isna(value):
+        return None
+    return str(int(float(value)))
+
+
 def _create_samples(
     dataset_dir: Path, category_map: dict, split_type: str
 ) -> Generator:
@@ -54,7 +60,11 @@ def _create_samples(
     dataset_df = pd.read_csv(dataset_dir / (split_type + ".csv"))
 
     for _, row in dataset_df.iterrows():
-        taxon_key, filename = str(row["taxonkey"]), row["filename"]
+        taxon_key = _normalize_taxon_key(row["taxonkey"])
+        if taxon_key is None:
+            continue
+
+        filename =  row["filename"]
         image = _get_image(dataset_dir / "ami_traps" / taxon_key / filename)
         label = category_map.get(taxon_key, None)
         if not label:
