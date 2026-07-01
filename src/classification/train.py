@@ -2,8 +2,7 @@
 # coding: utf-8
 
 
-""" Main script for training classification models
-"""
+"""Main script for training classification models"""
 
 import pathlib
 import time
@@ -13,12 +12,13 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+import wandb
 from timm.utils import AverageMeter
 
-import wandb
 from src.classification.dataloader import build_webdataset_pipeline
 from src.classification.utils import (
     build_model,
+    freeze_backbone,
     get_learning_rate_scheduler,
     get_loss_function,
     get_optimizer,
@@ -46,9 +46,11 @@ def _save_model_checkpoint(
         "epoch": epoch,
         "model_state_dict": model_state_dict,
         "optimizer_state_dict": optimizer.state_dict(),
-        "lr_scheduler": learning_rate_scheduler.state_dict()
-        if learning_rate_scheduler is not None
-        else None,
+        "lr_scheduler": (
+            learning_rate_scheduler.state_dict()
+            if learning_rate_scheduler is not None
+            else None
+        ),
         "train_loss": train_loss,
         "val_loss": val_loss,
     }
@@ -161,6 +163,7 @@ def train_model(
     weight_on_order_loss: float,
     label_smoothing: float,
     mixed_resolution_data_aug: bool,
+    freeze_backbone_layers: bool,
     model_save_directory: str,
     wandb_entity: Optional[str],
     wandb_project: Optional[str],
@@ -175,6 +178,8 @@ def train_model(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"The available device is {device}.")
     model = build_model(device, model_type, num_classes, existing_weights)
+    if freeze_backbone_layers:
+        freeze_backbone(model)
 
     # Setup dataloaders
     train_dataloader = build_webdataset_pipeline(
@@ -240,6 +245,7 @@ def train_model(
             "weight_decay": weight_decay,
             "loss_function_type": loss_function_type,
             "label_smoothing": label_smoothing,
+            "freeze_backbone": freeze_backbone_layers,
             "model_save_directory": model_save_directory,
         }
         wandb.init(

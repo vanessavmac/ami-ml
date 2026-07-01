@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-""" Conversion of labelled insect camera trap data to a ML format data
-"""
+"""Conversion of labelled insect camera trap data to a ML format data"""
 
 import json
 import os
@@ -15,13 +14,16 @@ import dotenv
 
 dotenv.load_dotenv()
 
-AMI_TRAPS_DATASET = os.getenv("AMI_TRAPS_DATASET", "./ami_traps_dataset")
-FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET = os.getenv(
-    "FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET", "./fine_tuning_data/ami_traps"
+AMI_TRAPS_DATASET = os.getenv("AMI_TRAPS_DATASET", "~/data/ami_traps/insect_crops")
+FINE_TUNING_AMI_TRAPS_DATASET = os.getenv(
+    "FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET",
+    "~/data/fine_tuning_data/ami_traps",
 )
 SPECIES_EXCLUSION_LIST = os.getenv(
-    "SPECIES_EXCLUSION_LIST", "ami-traps_sp_missing_in_ami-gbif.pickle"
+    "SPECIES_EXCLUSION_LIST",
+    "~/data/ami_traps/metadata/ami-traps_sp_missing_in_ami-gbif.pickle",
 )
+REGION_NAME = os.getenv("REGION_NAME", "NorthEasternAmerica")
 
 
 def _get_ground_truth_info(
@@ -99,7 +101,7 @@ def convert_raw_data_to_structured_format(
 if __name__ == "__main__":
     convert_raw_data_to_structured_format(
         AMI_TRAPS_DATASET,
-        FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET,
+        FINE_TUNING_AMI_TRAPS_DATASET,
         SPECIES_EXCLUSION_LIST,
-        "WesternEurope",
+        REGION_NAME,
     )

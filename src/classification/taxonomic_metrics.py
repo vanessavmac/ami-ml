@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pandas as pd
 import torch
+from sklearn.metrics import confusion_matrix
 from torch.nn.functional import softmax
 
 
@@ -162,9 +164,7 @@ def record_species_metrics(
     return state
 
 
-def print_species_accuracy_report(
-    run_name: str, state: TaxonomicAccuracyState
-) -> None:
+def print_species_accuracy_report(run_name: str, state: TaxonomicAccuracyState) -> None:
     """Print species-level micro and macro top-1 accuracy."""
     if state.sp_count == 0:
         print(f"No samples evaluated for {run_name}.", flush=True)
@@ -182,3 +182,207 @@ def print_species_accuracy_report(
         f"\n",
         flush=True,
     )
+
+
+########################################################################################
+# Metrics to track per-species accuracy
+########################################################################################
+
+
+@dataclass
+class PerSpeciesRecord:
+    """Per-species accuracy accumulator."""
+
+    n: int = 0
+    top1_correct: int = 0
+    top5_correct: int = 0
+
+
+@dataclass
+class EvaluationArtifacts:
+    """Detailed evaluation outputs for reporting and comparison."""
+
+    run_name: str
+    state: TaxonomicAccuracyState
+    per_species: dict[str, PerSpeciesRecord] = field(default_factory=dict)
+    gt_pred_pairs: list[tuple[str, str]] = field(default_factory=list)
+    prediction_details: list[dict[str, str | bool]] = field(default_factory=list)
+
+
+def record_evaluation_sample(
+    artifacts: EvaluationArtifacts,
+    species_gt: str,
+    species_macro_key: str,
+    sp_pred: List[List[str | float]],
+    save_prediction_detail: bool = False,
+) -> EvaluationArtifacts:
+    """Record micro/macro metrics and optional per-species detail for one sample."""
+    top1, top5 = check_prediction(species_gt, sp_pred)
+    pred_top1 = sp_pred[0][0] if sp_pred else ""
+
+    record_species_metrics(
+        artifacts.state,
+        species_gt=species_gt,
+        species_macro_key=species_macro_key,
+        sp_pred=sp_pred,
+    )
+
+    if species_gt not in artifacts.per_species:
+        artifacts.per_species[species_gt] = PerSpeciesRecord()
+    rec = artifacts.per_species[species_gt]
+    rec.n += 1
+    rec.top1_correct += top1
+    rec.top5_correct += top5
+
+    artifacts.gt_pred_pairs.append((species_gt, str(pred_top1)))
+    if save_prediction_detail:
+        artifacts.prediction_details.append(
+            {
+                "gt_species": species_gt,
+                "pred_species": str(pred_top1),
+                "top1_correct": bool(top1),
+            }
+        )
+    return artifacts
+
+
+def build_per_species_accuracy_df(
+    per_species: dict[str, PerSpeciesRecord],
+) -> pd.DataFrame:
+    """Build a per-species accuracy table."""
+    rows = []
+    for species, rec in sorted(per_species.items()):
+        top1_acc = round(rec.top1_correct / rec.n * 100, 2) if rec.n else 0.0
+        top5_acc = round(rec.top5_correct / rec.n * 100, 2) if rec.n else 0.0
+        rows.append(
+            {
+                "species": species,
+                "n": rec.n,
+                "top1_correct": rec.top1_correct,
+                "top1_acc": top1_acc,
+                "top5_correct": rec.top5_correct,
+                "top5_acc": top5_acc,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_confusion_matrix_df(
+    gt_pred_pairs: list[tuple[str, str]],
+) -> pd.DataFrame:
+    """Build a long-format confusion matrix from (gt, pred) pairs."""
+    if not gt_pred_pairs:
+        return pd.DataFrame(columns=["gt_species", "pred_species", "count"])
+
+    gt_labels = [gt for gt, _ in gt_pred_pairs]
+    pred_labels = [pred for _, pred in gt_pred_pairs]
+    labels = sorted(set(gt_labels) | set(pred_labels))
+    cm = confusion_matrix(gt_labels, pred_labels, labels=labels)
+
+    rows = []
+    for gt_idx, gt_species in enumerate(labels):
+        for pred_idx, pred_species in enumerate(labels):
+            count = int(cm[gt_idx, pred_idx])
+            if count > 0:
+                rows.append(
+                    {
+                        "gt_species": gt_species,
+                        "pred_species": pred_species,
+                        "count": count,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def build_evaluation_summary(artifacts: EvaluationArtifacts) -> dict:
+    """Summarize micro/macro accuracy for JSON export."""
+    state = artifacts.state
+    if state.sp_count == 0:
+        return {
+            "run_name": artifacts.run_name,
+            "n_samples": 0,
+            "micro_top1_acc": None,
+            "macro_top1_acc": None,
+        }
+
+    micro_top1 = round(state.sp_top1 / state.sp_count * 100, 2)
+    macro_top1, _ = calculate_macro_accuracy(state.macro_acc["SPECIES"])
+    return {
+        "run_name": artifacts.run_name,
+        "n_samples": state.sp_count,
+        "micro_top1_acc": micro_top1,
+        "macro_top1_acc": macro_top1,
+    }
+
+
+def write_evaluation_artifacts(
+    output_dir: str | Path,
+    artifacts: EvaluationArtifacts,
+    save_predictions: bool = False,
+) -> Path:
+    """Write per-species metrics, confusion matrix, and summary JSON."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    per_species_df = build_per_species_accuracy_df(artifacts.per_species)
+    per_species_df.to_csv(out / "per_species_accuracy.csv", index=False)
+
+    confusion_df = build_confusion_matrix_df(artifacts.gt_pred_pairs)
+    confusion_df.to_csv(out / "confusion_matrix_long.csv", index=False)
+
+    if save_predictions and artifacts.prediction_details:
+        pd.DataFrame(artifacts.prediction_details).to_csv(
+            out / "predictions_detail.csv", index=False
+        )
+
+    summary = build_evaluation_summary(artifacts)
+    with open(out / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    return out
+
+
+def compare_per_species_reports(
+    baseline_csv: str | Path,
+    finetuned_csv: str | Path,
+    output_csv: str | Path,
+    overlap_table_csv: str | Path | None = None,
+) -> pd.DataFrame:
+    """Compare per-species accuracy between baseline and fine-tuned runs."""
+    baseline = pd.read_csv(baseline_csv)
+    finetuned = pd.read_csv(finetuned_csv)
+
+    merged = baseline.merge(
+        finetuned,
+        on="species",
+        how="outer",
+        suffixes=("_baseline", "_finetuned"),
+    )
+    merged["n"] = merged["n_baseline"].fillna(merged["n_finetuned"])
+    merged["delta_top1_acc"] = (
+        merged["top1_acc_finetuned"] - merged["top1_acc_baseline"]
+    )
+    merged["delta_top5_acc"] = (
+        merged["top5_acc_finetuned"] - merged["top5_acc_baseline"]
+    )
+
+    def _change_label(delta: float) -> str:
+        if pd.isna(delta):
+            return "unknown"
+        if delta > 0:
+            return "improved"
+        if delta < 0:
+            return "regressed"
+        return "unchanged"
+
+    merged["top1_change"] = merged["delta_top1_acc"].apply(_change_label)
+
+    if overlap_table_csv and Path(overlap_table_csv).exists():
+        overlap = pd.read_csv(overlap_table_csv)
+        overlap_species = set(overlap["species_name"])
+        merged["in_overlap_set"] = merged["species"].isin(overlap_species)
+    else:
+        merged["in_overlap_set"] = False
+
+    merged.to_csv(output_csv, index=False)
+    return merged

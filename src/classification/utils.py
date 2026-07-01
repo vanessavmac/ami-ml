@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-""" Utility functions
-"""
+"""Utility functions"""
 
 import random
 import tarfile
@@ -116,6 +115,40 @@ def get_webdataset_length(sharedurl: str) -> int:
     tar_filenames = list(braceexpand.braceexpand(sharedurl))
     counts = [_count_files_from_tar(tar_f) for tar_f in tar_filenames]
     return int(sum(counts))
+
+
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    """
+    Return the inner module when wrapped in DataParallel.
+    """
+    if isinstance(model, torch.nn.DataParallel):
+        return model.module
+    return model
+
+
+def freeze_backbone(model: torch.nn.Module) -> int:
+    """Freeze all parameters except the classification head (fc layer).
+
+    Returns the number of trainable parameters.
+    """
+    base_model = _unwrap_model(model)
+    if not hasattr(base_model, "fc"):
+        raise RuntimeError(
+            "freeze_backbone requires a model with an fc classification head."
+        )
+
+    for param in base_model.parameters():
+        param.requires_grad = False
+    for param in base_model.fc.parameters():
+        param.requires_grad = True
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    print(
+        f"Frozen backbone: {trainable:,} trainable / {total:,} total parameters.",
+        flush=True,
+    )
+    return trainable
 
 
 def build_model(

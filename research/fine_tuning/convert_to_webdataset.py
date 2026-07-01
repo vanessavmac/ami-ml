@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-""" Conversion of ML structured data to the WebDataset format
-"""
+"""Conversion of ML structured data to the WebDataset format"""
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -46,7 +46,10 @@ def _normalize_taxon_key(value) -> str | None:
 
 
 def _create_samples(
-    dataset_dir: Path, category_map: dict, split_type: str
+    dataset_dir: Path,
+    category_map: dict,
+    split_type: str,
+    images_subdir: str,
 ) -> Generator:
     """Create samples for the webdataset.
 
@@ -54,6 +57,7 @@ def _create_samples(
         dataset_dir (Path): Directory containing the dataset.
         category_map (dict): Mapping of taxon keys to labels.
         split_type (str): Type of split (train, val, test).
+        images_subdir (str): Subdirectory containing the images.
     """
 
     # Read the split files
@@ -64,8 +68,8 @@ def _create_samples(
         if taxon_key is None:
             continue
 
-        filename =  row["filename"]
-        image = _get_image(dataset_dir / "ami_traps" / taxon_key / filename)
+        filename = row["filename"]
+        image = _get_image(dataset_dir / images_subdir / taxon_key / filename)
         label = category_map.get(taxon_key, None)
         if not label:
             print(f"Label not found for taxon key {taxon_key}", flush=True)
@@ -92,17 +96,24 @@ def _write_samples_to_sink(
         None: The function saves the samples in the specified directory.
     """
     webdataset_pattern = str(webdataset_dir / f"{split_type}-%06d.tar")
+    webdataset_dir.mkdir(parents=True, exist_ok=True)
+
     with wds.ShardWriter(webdataset_pattern, maxsize=max_shard_size) as sink:
         for sample in samples:
             sink.write(sample)
 
 
-def convert_to_webdataset(fine_tuning_data_dir: str, category_map_f: str) -> None:
-    """Main function to convert the fine-tuning camera trap data to webdataset format.
+def convert_to_webdataset(
+    fine_tuning_data_dir: str,
+    category_map_f: str,
+    images_subdir: str = "ami_traps",
+) -> None:
+    """Main function to convert fine-tuning camera trap data to webdataset format.
 
     Args:
-        fine_tuning_data_dir (str): Directory containing the fine-tuning data.
-        category_map_f (str): Path to the category map file.
+        fine_tuning_data_dir (str): Directory containing split CSVs.
+        category_map_f (str): JSON mapping taxon key (str) to class index.
+        images_subdir (str): Subdirectory under fine_tuning_data_dir with taxon folders.
 
     Returns:
         None: The function processes and saves the webdataset in the specified directory.
@@ -114,31 +125,46 @@ def convert_to_webdataset(fine_tuning_data_dir: str, category_map_f: str) -> Non
 
     # Create samples for the webdataset
     fine_tuning_data_path = Path(fine_tuning_data_dir)
-    train_samples = _create_samples(
-        fine_tuning_data_path,
-        category_map,
-        "train",
-    )
-    val_samples = _create_samples(fine_tuning_data_path, category_map, "val")
-    test_samples = _create_samples(fine_tuning_data_path, category_map, "test")
+    for split_type in ("train", "val", "test"):
+        split_csv = fine_tuning_data_path / f"{split_type}.csv"
+        if not split_csv.exists():
+            raise FileNotFoundError(f"Split CSV not found: {split_csv}")
 
-    # Save the samples to the webdataset format
-    _write_samples_to_sink(
-        train_samples, fine_tuning_data_path / "webdataset" / "train", "train"
+        samples = _create_samples(
+            fine_tuning_data_path,
+            category_map,
+            split_type,
+            images_subdir,
+        )
+        _write_samples_to_sink(
+            samples,
+            fine_tuning_data_path / "webdataset" / split_type,
+            split_type,
+        )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Convert ML dataset to WebDataset.")
+    parser.add_argument(
+        "--fine-tuning-data-dir",
+        default="~/data/fine_tuning_data",
     )
-    _write_samples_to_sink(
-        val_samples, fine_tuning_data_path / "webdataset" / "val", "val"
+    parser.add_argument(
+        "--category-map-f",
+        default="~/data/fine_tuning_data/taxon_to_quebec_idx.json",
     )
-    _write_samples_to_sink(
-        test_samples, fine_tuning_data_path / "webdataset" / "test", "test"
+    parser.add_argument(
+        "--images-subdir",
+        default="ami_traps",
+        help="Subdirectory containing taxon-key image folders.",
     )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    FINE_TUNING_UK_DENMARK_DATA_DIR = os.getenv(
-        "FINE_TUNING_UK_DENMARK_DATA_DIR", "./fine_tuning_data/"
+    args = parse_args()
+    convert_to_webdataset(
+        fine_tuning_data_dir=args.fine_tuning_data_dir,
+        category_map_f=args.category_map_f,
+        images_subdir=args.images_subdir,
     )
-    WEUROPE_CATEGORY_MAP = os.getenv(
-        "WEUROPE_CATEGORY_MAP", "./neamerica_category_map.csv"
-    )
-    convert_to_webdataset(FINE_TUNING_UK_DENMARK_DATA_DIR, WEUROPE_CATEGORY_MAP)

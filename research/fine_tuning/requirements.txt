@@ -1,0 +1,30 @@
+# ami-ml fine-tuning environment (Python 3.13)
+#
+# Install from ami-ml repo root:
+#   pip install --upgrade pip
+#   pip install -r research/fine_tuning/requirements.txt
+#   pip install --no-deps -e .
+
+# Note: versions differ from poetry.lock (torch 2.0) because
+# PyTorch 2.0 has no Python 3.13 wheels.
+
+# --- PyTorch (matched pair; cp313 wheels on PyPI) ---
+torch==2.9.1
+torchvision==0.24.1
+
+# --- Models + data loading ---
+timm==1.0.27
+webdataset==0.2.100
+braceexpand==0.1.7
+pillow==11.3.0
+
+# --- Training CLI + experiment tracking ---
+click==8.1.8
+wandb>=0.22.3
+tqdm==4.67.1
+python-dotenv==1.0.1
+
+# --- Evaluation + Atlantic data-prep scripts ---
+numpy==2.2.6
+pandas==2.2.3
+scikit-learn==1.6.1

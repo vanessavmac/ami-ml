@@ -202,6 +202,12 @@ COMMANDS_HELP = {TRAIN_CMD: "Train a classification model"}
     "See The AMI Dataset ECCV 2024 paper for more details.",
 )
 @click.option(
+    "--freeze_backbone",
+    type=bool,
+    default=False,
+    help="Freeze all layers except the classification head (fc) during fine-tuning.",
+)
+@click.option(
     "--model_save_directory",
     type=str,
     required=True,
@@ -247,6 +253,7 @@ def train_model_command(
     weight_on_order_loss: float,
     label_smoothing: float,
     mixed_resolution_data_aug: bool,
+    freeze_backbone: bool,
     model_save_directory: str,
     wandb_entity: Optional[str],
     wandb_project: Optional[str],
@@ -276,6 +283,7 @@ def train_model_command(
         weight_on_order_loss=weight_on_order_loss,
         label_smoothing=label_smoothing,
         mixed_resolution_data_aug=mixed_resolution_data_aug,
+        freeze_backbone_layers=freeze_backbone,
         model_save_directory=model_save_directory,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,

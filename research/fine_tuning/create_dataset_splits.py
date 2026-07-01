@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-""" Split dataset into train/val/test partitions
-"""
+"""Split dataset into train/val/test partitions"""
 
 import os
 import random
@@ -74,20 +73,19 @@ def create_dataset_splits(
     test_size: float = 0.2,
     random_seed: int = 42,
     min_samples_per_class: int = 5,
+    splits_output_dir: str | None = None,
 ) -> None:
     """
     Splits the dataset into train, validation, and test sets.
 
     Args:
-        data_dir (str): Path to the dataset directory.
+        data_dir (str): Path to the dataset directory with taxon-key subfolders.
         train_size (float): Proportion of the dataset to include in the train split.
         val_size (float): Proportion of the dataset to include in the validation split.
         test_size (float): Proportion of the dataset to include in the test split.
         random_seed (int): Random seed for reproducibility.
         min_samples_per_class (int): Minimum number of samples per class to include for training. Otherwise, the class will only appear in the test set.
-
-    Returns:
-        tuple: Train, validation, and test splits.
+        splits_output_dir (str, optional): Directory for train/val/test CSVs. Defaults to data_dir.
     """
     # Set random seed for reproducibility
     random.seed(random_seed)
@@ -123,14 +121,28 @@ def create_dataset_splits(
             val_set = _append_data_to_dataframe(val_set, val_files, taxon_key)
             test_set = _append_data_to_dataframe(test_set, test_files, taxon_key)
 
-    # Save the splits to disk
-    train_set.to_csv(Path(data_dir) / "train.csv", index=False)
-    val_set.to_csv(Path(data_dir) / "val.csv", index=False)
-    test_set.to_csv(Path(data_dir) / "test.csv", index=False)
+    # Save the splits to the disk or output directory if specified
+    output_dir = Path(splits_output_dir) if splits_output_dir else Path(data_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    train_set.to_csv(output_dir / "train.csv", index=False)
+    val_set.to_csv(output_dir / "val.csv", index=False)
+    test_set.to_csv(output_dir / "test.csv", index=False)
 
 
 if __name__ == "__main__":
-    DATA_DIR = os.getenv(
-        "FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET", "./fine_tuning_data/ami_traps"
+
+    # create_dataset_splits(
+    #     data_dir="~/data/fine_tuning_data/ami_traps",
+    #     train_size=0.0,
+    #     val_size=0.0,
+    #     test_size=1.0,
+    # )
+
+    create_dataset_splits(
+        data_dir="~/data/fine_tuning_data_atlantic/atlantic_forestry",
+        splits_output_dir="~/data/fine_tuning_data_atlantic",
+        train_size=0.85,
+        val_size=0.15,
+        test_size=0.0,
+        min_samples_per_class=1,
     )
-    create_dataset_splits(DATA_DIR)
