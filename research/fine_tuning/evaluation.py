@@ -272,11 +272,11 @@ def compare_evaluations(
 
 if __name__ == "__main__":
     evaluate_model(
-        data_dir="~/data/fine_tuning_data",
-        model_file="~/data/models/moths_quebecvermont_resnet50_randaug_mixres_128_fev24.pth",
+        data_dir="~/vanessa/data/fine_tuning_data",
+        model_file="~/vanessa/data/models/moths_quebecvermont_resnet50_randaug_mixres_128_fev24.pth",
         model_type="resnet50",
         num_classes=3107,
-        test_webdataset="~/data/fine_tuning_data/webdataset/test/test-{000000..000003}.tar",
-        category_map_json="~/data/models/quebec-vermont_moth-category-map_19Jan2023.json",
+        test_webdataset="~/vanessa/data/fine_tuning_data/webdataset/test/test-{000000..000003}.tar",
+        category_map_json="~/vanessa/data/models/quebec-vermont_moth-category-map_19Jan2023.json",
         samples_type="all",
     )

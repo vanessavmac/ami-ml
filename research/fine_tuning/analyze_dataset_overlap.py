@@ -10,6 +10,8 @@ Produces the following outputs:
 Must match for overlap species.
 - `antenna_taxon_issues.csv` — Antenna taxa needing platform fixes
 (see `recommended_action` column)
+- `gbif_key_mismatches.csv` — Antenna vs fgrained disagreements aligned to fgrained
+(for AMI-Traps folder/ID space; no longer a hard fail at resolve time)
 - `species_overlap_summary.json` / `species_overlap_report.md`
 """
 
@@ -29,15 +31,16 @@ from atlantic_dataset_utils import (
     filter_atlantic_trainable_rows,
     load_quebec_category_map,
     normalize_taxon_key,
+    print_gbif_mismatch_drop_report,
     resolve_gbif_taxon_keys_from_dataframe,
 )
 
-DEFAULT_ATLANTIC_CSV = "~/data/exports/atlantic-forestry-centre_export-104.csv"
-DEFAULT_AMI_TRAPS_TEST_CSV = "~/data/fine_tuning_data/test.csv"
-DEFAULT_FGRAINED_LABELS = "~/data/ami_traps/insect_crops/fgrained_labels.json"
-DEFAULT_QUEBEC_MAP = "~/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
-DEFAULT_TAXON_TO_IDX = "~/data/fine_tuning_data/taxon_to_quebec_idx.json"
-DEFAULT_OUTPUT_DIR = "~/data/fine_tuning_data_atlantic/overlap_analysis"
+DEFAULT_ATLANTIC_CSV = "~/vanessa/data/exports/atlantic-forestry-centre_export-104.csv"
+DEFAULT_AMI_TRAPS_TEST_CSV = "~/vanessa/data/fine_tuning_data/test.csv"
+DEFAULT_FGRAINED_LABELS = "~/vanessa/data/ami_traps/insect_crops/fgrained_labels.json"
+DEFAULT_QUEBEC_MAP = "~/vanessa/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
+DEFAULT_TAXON_TO_IDX = "~/vanessa/data/fine_tuning_data/taxon_to_quebec_idx.json"
+DEFAULT_OUTPUT_DIR = "~/vanessa/data/fine_tuning_data_atlantic/overlap_analysis"
 
 
 def _load_taxon_bridge(
@@ -119,31 +122,57 @@ def _write_overlap_report(
     atlantic_exclusion_stats: dict[str, int],
 ) -> str:
     overlap_table = []
+    overlap_mismatches: list[dict] = []
     for species in sorted(overlap_species):
         atl_row = atlantic_counts.loc[atlantic_counts["species_name"] == species]
         ami_row = ami_traps_counts.loc[ami_traps_counts["species_name"] == species]
         atlantic_key = str(atl_row["gbif_taxon_key"].iloc[0]) if len(atl_row) else None
         ami_traps_key = str(ami_row["gbif_taxon_key"].iloc[0]) if len(ami_row) else None
+        n_atlantic = int(atl_row["n_images"].iloc[0]) if len(atl_row) else 0
+        n_ami_traps_test = int(ami_row["n_images"].iloc[0]) if len(ami_row) else 0
         if atlantic_key != ami_traps_key:
-            raise GbifKeyMismatchError(
-                f"Overlap species {species!r} has mismatched GBIF keys: "
-                f"atlantic={atlantic_key}, ami_traps={ami_traps_key}"
+            overlap_mismatches.append(
+                {
+                    "species_name": species,
+                    "antenna_gbif_key": atlantic_key,
+                    "fgrained_gbif_key": ami_traps_key,
+                    "n_rows": n_atlantic,
+                    "n_ami_traps_test": n_ami_traps_test,
+                    "determination_id": "",
+                    "resolution_source": "overlap_table",
+                }
             )
+            continue
         overlap_table.append(
             {
                 "species_name": species,
                 "atlantic_gbif_key": atlantic_key,
                 "ami_traps_gbif_key": ami_traps_key,
-                "n_atlantic": int(atl_row["n_images"].iloc[0]) if len(atl_row) else 0,
-                "n_ami_traps_test": (
-                    int(ami_row["n_images"].iloc[0]) if len(ami_row) else 0
-                ),
+                "n_atlantic": n_atlantic,
+                "n_ami_traps_test": n_ami_traps_test,
                 "quebec_class_idx": (
                     int(atl_row["quebec_class_idx"].iloc[0])
                     if len(atl_row)
                     else int(ami_row["quebec_class_idx"].iloc[0])
                 ),
             }
+        )
+    if overlap_mismatches:
+        print_gbif_mismatch_drop_report(
+            overlap_mismatches,
+            n_trainable_rows=int(atlantic_counts["n_images"].sum()),
+            n_trainable_species=len(atlantic_counts),
+        )
+        pd.DataFrame(overlap_mismatches).to_csv(
+            output_dir / "gbif_key_mismatches.csv", index=False
+        )
+        species_list = [m["species_name"] for m in overlap_mismatches]
+        n_rows = sum(int(m["n_rows"]) for m in overlap_mismatches)
+        raise GbifKeyMismatchError(
+            f"{len(overlap_mismatches)} overlap GBIF key mismatch(es); "
+            f"dropping them would exclude {n_rows} Atlantic rows / "
+            f"{len(overlap_mismatches)} species: {species_list}",
+            mismatches=overlap_mismatches,
         )
     overlap_df = pd.DataFrame(overlap_table)
     overlap_df.to_csv(output_dir / "species_overlap_table.csv", index=False)

@@ -30,10 +30,10 @@ from atlantic_dataset_utils import (
     resolve_gbif_taxon_keys_from_dataframe,
 )
 
-DEFAULT_ATLANTIC_CSV = "~/data/exports/atlantic-forestry-centre_export-104.csv"
-DEFAULT_QUEBEC_MAP = "~/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
-DEFAULT_FGRAINED_LABELS = "~/data/ami_traps/insect_crops/fgrained_labels.json"
-DEFAULT_OUTPUT_DIR = "~/data/fine_tuning_data_atlantic/atlantic_forestry"
+DEFAULT_ATLANTIC_CSV = "~/vanessa/data/exports/atlantic-forestry-centre_export-104.csv"
+DEFAULT_QUEBEC_MAP = "~/vanessa/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
+DEFAULT_FGRAINED_LABELS = "~/vanessa/data/ami_traps/insect_crops/fgrained_labels.json"
+DEFAULT_OUTPUT_DIR = "~/vanessa/data/fine_tuning_data_atlantic/atlantic_forestry"
 
 
 def _download_image(url: str, dest: Path) -> bool:

@@ -61,8 +61,9 @@ flowchart TD
   I -->|no| K["E: GbifKeyNotFoundError"]
   I -->|yes| G
   G --> L{"overlap key match?"}
-  L -->|mismatch| M[GbifKeyMismatchError]
+  L -->|mismatch| M["use fgrained key for ID align"]
   L -->|ok| done[resolved GBIF key]
+  M --> done
 ```
 
 #### Resolution, caching, and issues report
@@ -80,18 +81,37 @@ flowchart TD
 
 **Issues report:** `antenna_taxon_issues.csv` is written by overlap analysis and convert. Lists Antenna taxa that needed fallbacks with `recommended_action` for platform fixes. Example row: taxon **11553** / `Alcis porcelaria` → resolved via `fgrained_labels`, flagged `needs_antenna_fix`.
 
-**VERY IMPORTANT NOTE: for the example with** `Alcis porcelaria` **we ended up excluding it anyway from analysis using** `ATLANTIC_DATASET_EXCLUDED_SPECIES = frozenset({"Alcis porcelaria"})`**.** Rationale:
+**VERY IMPORTANT NOTE: for the example with** `Alcis porcelaria` **we ended up excluding it anyway from analysis using** `ATLANTIC_DATASET_EXCLUDED_SPECIES`**.** Same exclusion set also drops sparse Antenna/fgrained conflicts (`Macaria notata`, `Haploa clymene`, `Eucosma tomonana`) and the legacy synonym stub `Speranza pustularia` (1 row; use `Macaria pustularia` instead). Full rationale for each skipped species:
 
-- Only one sample — negligible training impact
-- Still in the Quebec map — so “not in Quebec map” filtering would not remove it (that filter already existed)
-- No clean GBIF key from any implemented source without platform fixes or name-synonym bridging
-- Fast path to unblock the rest of the ~32 Atlantic-only species and the full pipeline
-- No AMI-Traps crop in fgrained_labels.json uses label: "Alcis porcelaria" or "Protoboarmia porcelaria" with a valid GBIF key.
+**Alcis porcelaria** — Antenna stub with no usable GBIF key  
+- Atlantic points at Antenna taxon **11553**, which returns `rank: "Unknown"` and `gbif_taxon_key: null`.  
+- The accepted name on GBIF is `Protoboarmia porcelaria` (key `4302230`), as a separate Antenna taxon, but they aren’t linked in the API.  
+- Only **1 sample**, still in the Quebec map (so normal filters wouldn’t drop it), and no AMI-Traps crop under either name with a valid key. Excluded to unblock the pipeline rather than special-case synonym bridging.
+
+**Speranza pustularia** — Legacy synonym stub, 1 row  
+- Same class of problem as above: Antenna stub with no GBIF key, single sample.  
+- Prefer training under the accepted synonym **`Macaria pustularia`** instead of keeping this name.
+
+**Macaria notata** — Sparse Antenna vs fgrained GBIF key conflict (≤2 rows)  
+- Antenna and AMI-Traps/`fgrained_labels` disagree on the GBIF key.  
+- Too few rows to justify remapping IDs; dropped instead.
+
+**Haploa clymene** — Key conflict **plus** synonym → wrong accepted species  
+- Same sparse Antenna/fgrained key mismatch (≤2 rows).  
+- Extra issue: Antenna’s synonym path maps to a **different accepted species** (`colona` vs `clymene`), so remapping would risk training under the wrong label. Prefer exclude over ID remapping.
+
+**Eucosma tomonana** — Sparse Antenna vs fgrained key conflict (≤2 rows)  
+- Same rationale as `Macaria notata`: Antenna key ≠ fgrained key, few rows, exclude rather than remap.
+
+Shared policy for the three conflict species: keep AMI-Traps/`fgrained` as the frozen benchmark; for tiny mismatch cases, drop Atlantic rows instead of remapping IDs.
+
+
+**Mismatch policy (overlap species kept in training):** If Antenna returns a non-null GBIF key that disagrees with `fgrained_labels`, use the **fgrained** key for folder/ID alignment (`resolution_source=fgrained_mismatch_align`). Example: `Idia aemula` Antenna `11935305` is a GBIF synonym whose accepted key is fgrained `9407200`. Do **not** remap AMI-Traps to Antenna keys for these cases — AMI-Traps is the frozen held-out benchmark.
 
 #### Hard errors
 
 - `GbifKeyNotFoundError` — no GBIF key after all fallbacks; message notes that Antenna taxon may need platform fix and that exposing `synonym_of_id` on `TaxonSerializer` would enable synonym fallback
-- `GbifKeyMismatchError` — overlap species: Antenna returned a non-null key that disagrees with fgrained `acceptedTaxonKey`
+- `GbifKeyMismatchError` — safety net only (e.g. overlap table after resolve): Antenna/training key still disagrees with AMI-Traps. Normal resolve path aligns to fgrained instead of failing; see `gbif_key_mismatches.csv`.
 
 ### Workflow steps
 
@@ -120,6 +140,7 @@ Outputs under `overlap_analysis/`:
 - `species_counts_atlantic.csv` / `species_counts_ami_traps_test.csv`
 - `species_overlap_table.csv` — includes `atlantic_gbif_key` and `ami_traps_gbif_key` (must match for overlap species)
 - `antenna_taxon_issues.csv` — Antenna taxa needing platform fixes (see `recommended_action` column)
+- `gbif_key_mismatches.csv` — Antenna vs fgrained disagreements aligned to the fgrained key (`n_rows` kept under AMI-Traps ID space)
 - `species_overlap_summary.json` / `species_overlap_report.md`
 
 #### 2. Download Atlantic Forestry crops

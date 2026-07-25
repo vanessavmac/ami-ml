@@ -15,8 +15,21 @@ import pandas as pd
 
 PSEUDO_SPECIES_LABELS = frozenset({"Not Identifiable", "Not Lepidoptera"})
 
-# Species excluded from Atlantic fine-tuning (Antenna GBIF stub; single-sample edge case).
-ATLANTIC_DATASET_EXCLUDED_SPECIES = frozenset({"Alcis porcelaria"})
+# Species excluded from Atlantic / combined fine-tuning.
+# - Alcis porcelaria / Speranza pustularia: Antenna stubs with no GBIF key
+#   (single sample each). Prefer Macaria pustularia for the latter synonym.
+# - Macaria notata / Haploa clymene / Eucosma tomonana: Antenna vs fgrained key
+#   conflicts with ≤2 rows each; Haploa also maps Antenna synonym → different
+#   accepted species (colona vs clymene). Prefer exclude over ID remapping.
+ATLANTIC_DATASET_EXCLUDED_SPECIES = frozenset(
+    {
+        "Alcis porcelaria",
+        "Speranza pustularia",
+        "Macaria notata",
+        "Haploa clymene",
+        "Eucosma tomonana",
+    }
+)
 
 DEFAULT_ANTENNA_API_BASE_URL = "https://api.antenna.insectai.org/api/v2"
 
@@ -28,6 +41,15 @@ class GbifKeyNotFoundError(Exception):
 class GbifKeyMismatchError(Exception):
     """Raised when Antenna GBIF key disagrees with AMI-Traps fgrained_labels."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        mismatches: list[dict[str, Any]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.mismatches = mismatches or []
+
 
 class GbifKeyConflictError(Exception):
     """Raised when fgrained_labels maps one species name to multiple acceptedTaxonKeys."""
@@ -38,11 +60,13 @@ ISSUE_NULL_GBIF_TAXON_KEY = "null_gbif_taxon_key"
 ISSUE_NEEDS_ANTENNA_FIX = "needs_antenna_fix"
 ISSUE_USED_FGRAINED_FALLBACK = "used_fgrained_fallback"
 ISSUE_USED_SYNONYM_OF_FALLBACK = "used_synonym_of_fallback"
+ISSUE_ALIGNED_TO_FGRAINED_ON_MISMATCH = "aligned_to_fgrained_on_mismatch"
 
 RESOLUTION_ANTENNA_TAXON = "antenna_taxon"
 RESOLUTION_OCCURRENCE_FALLBACK = "occurrence_fallback"
 RESOLUTION_SYNONYM_OF = "synonym_of"
 RESOLUTION_FGRAINED_LABELS = "fgrained_labels"
+RESOLUTION_FGRAINED_MISMATCH_ALIGN = "fgrained_mismatch_align"
 
 _ANTENNA_FIX_HINT = (
     "Exposing synonym_of_id on TaxonSerializer would enable synonym fallback."
@@ -225,6 +249,13 @@ def _synonym_of_taxon_id(payload: dict[str, Any]) -> str | None:
 
 
 def _recommended_action(result: GbifResolutionResult) -> str:
+    if ISSUE_ALIGNED_TO_FGRAINED_ON_MISMATCH in result.issues:
+        return (
+            f"Antenna gbif_taxon_key disagrees with AMI-Traps fgrained_labels; "
+            f"training uses fgrained key {result.gbif_taxon_key} for ID alignment. "
+            f"Update Antenna taxon {result.determination_id} to the accepted key "
+            f"(or refresh AMI-Traps fgrained_labels in a dedicated remap)."
+        )
     if ISSUE_NEEDS_ANTENNA_FIX not in result.issues:
         return "No action needed"
     taxon_id = result.determination_id
@@ -309,15 +340,16 @@ def resolve_gbif_taxon_key_for_determination(
             f"platform fix (rank/gbif_taxon_key/synonym_of). {_ANTENNA_FIX_HINT}"
         )
 
+    # Overlap species: prefer AMI-Traps fgrained key so training folders match
+    # the held-out benchmark ID space (e.g. Antenna synonym key → accepted key).
     if (
         resolution_source in (RESOLUTION_ANTENNA_TAXON, RESOLUTION_OCCURRENCE_FALLBACK)
         and species_name in fgrained_ref
         and gbif_key != fgrained_ref[species_name]
     ):
-        raise GbifKeyMismatchError(
-            f"GBIF key mismatch for {species_name!r}: antenna={gbif_key}, "
-            f"fgrained_labels={fgrained_ref[species_name]}"
-        )
+        issues.append(ISSUE_ALIGNED_TO_FGRAINED_ON_MISMATCH)
+        gbif_key = fgrained_ref[species_name]
+        resolution_source = RESOLUTION_FGRAINED_MISMATCH_ALIGN
 
     return _build_resolution_result(
         gbif_key=gbif_key,
@@ -379,10 +411,130 @@ def print_gbif_resolution_summary(results: list[GbifResolutionResult]) -> None:
         RESOLUTION_OCCURRENCE_FALLBACK,
         RESOLUTION_SYNONYM_OF,
         RESOLUTION_FGRAINED_LABELS,
+        RESOLUTION_FGRAINED_MISMATCH_ALIGN,
     ):
         if by_source.get(source):
             print(f"- {source}: {by_source[source]}", flush=True)
     print(f"- Antenna taxa needing platform fix: {needs_fix}", flush=True)
+
+
+def _mismatch_alignments_from_results(
+    results: list[GbifResolutionResult],
+    trainable_df: pd.DataFrame,
+    *,
+    species_col: str,
+) -> list[dict[str, Any]]:
+    """Build per-species rows for Antenna→fgrained mismatch alignments."""
+    alignments: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for result in results:
+        if ISSUE_ALIGNED_TO_FGRAINED_ON_MISMATCH not in result.issues:
+            continue
+        if result.species_name in seen:
+            continue
+        seen.add(result.species_name)
+        n_rows = int(
+            (trainable_df[species_col] == result.species_name).sum()
+        )
+        alignments.append(
+            {
+                "determination_id": result.determination_id,
+                "species_name": result.species_name,
+                "antenna_gbif_key": result.antenna_gbif_taxon_key or "",
+                "fgrained_gbif_key": result.gbif_taxon_key,
+                "resolution_source": result.resolution_source,
+                "n_rows": n_rows,
+            }
+        )
+    return alignments
+
+
+def print_gbif_mismatch_align_report(
+    alignments: list[dict[str, Any]],
+    *,
+    n_trainable_rows: int,
+    n_trainable_species: int,
+) -> None:
+    """Print Antenna vs fgrained mismatches aligned to the fgrained key."""
+    if not alignments:
+        return
+
+    n_rows_kept = sum(int(m["n_rows"]) for m in alignments)
+    species_names = [m["species_name"] for m in alignments]
+
+    print(
+        "\n## GBIF key mismatches aligned to fgrained_labels (AMI-Traps ID space)",
+        flush=True,
+    )
+    print(
+        f"- Aligned species: {len(species_names)} "
+        f"(of {n_trainable_species} trainable)",
+        flush=True,
+    )
+    print(
+        f"- Rows kept under fgrained keys: {n_rows_kept} "
+        f"(of {n_trainable_rows} trainable)",
+        flush=True,
+    )
+    print("- Per-species:", flush=True)
+    for row in sorted(alignments, key=lambda m: (-m["n_rows"], m["species_name"])):
+        print(
+            f"  - {row['species_name']}: n_rows={row['n_rows']}, "
+            f"antenna={row['antenna_gbif_key']} → fgrained={row['fgrained_gbif_key']} "
+            f"(determination_id={row['determination_id']})",
+            flush=True,
+        )
+
+
+def print_gbif_mismatch_drop_report(
+    mismatches: list[dict[str, Any]],
+    *,
+    n_trainable_rows: int,
+    n_trainable_species: int,
+) -> None:
+    """Print Antenna vs fgrained mismatches and drop impact if excluded.
+
+    Used by overlap-table safety checks that still hard-fail.
+    """
+    if not mismatches:
+        return
+
+    n_rows_excluded = sum(int(m["n_rows"]) for m in mismatches)
+    species_excluded = [m["species_name"] for m in mismatches]
+    n_species_excluded = len(species_excluded)
+
+    print("\n## GBIF key mismatches (Antenna vs fgrained_labels)", flush=True)
+    print(
+        f"- Mismatched species: {n_species_excluded} "
+        f"(of {n_trainable_species} trainable)",
+        flush=True,
+    )
+    print(
+        f"- Rows that would be excluded if dropped: {n_rows_excluded} "
+        f"(of {n_trainable_rows} trainable)",
+        flush=True,
+    )
+    print("- Per-species:", flush=True)
+    for mismatch in sorted(mismatches, key=lambda m: (-m["n_rows"], m["species_name"])):
+        print(
+            f"  - {mismatch['species_name']}: n_rows={mismatch['n_rows']}, "
+            f"antenna={mismatch['antenna_gbif_key']}, "
+            f"fgrained={mismatch['fgrained_gbif_key']} "
+            f"(determination_id={mismatch.get('determination_id', '')})",
+            flush=True,
+        )
+    print(
+        f"- Species that would be excluded: {species_excluded}",
+        flush=True,
+    )
+
+
+def write_gbif_mismatch_report(
+    mismatches: list[dict[str, Any]], path: str | Path
+) -> None:
+    report_path = Path(path)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(mismatches).to_csv(report_path, index=False)
 
 
 def resolve_gbif_taxon_keys_from_dataframe(
@@ -395,7 +547,11 @@ def resolve_gbif_taxon_keys_from_dataframe(
     occurrence_id_col: str = "id",
     issues_report_path: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Add gbif_taxon_key column; hard-fail on missing keys or overlap mismatches."""
+    """Add gbif_taxon_key column; hard-fail only on missing keys.
+
+    When Antenna and AMI-Traps fgrained keys disagree for an overlap species,
+    use the fgrained key for folder/ID alignment and record the override.
+    """
     fgrained_ref = build_fgrained_species_to_accepted_key(
         load_fgrained_labels(fgrained_labels_path)
     )
@@ -410,18 +566,24 @@ def resolve_gbif_taxon_keys_from_dataframe(
     taxon_to_gbif: dict[str, str] = {}
     taxon_to_source: dict[str, str] = {}
     resolution_results: list[GbifResolutionResult] = []
+    not_found_errors: list[str] = []
+
     for _, row in trainable_df.drop_duplicates(
         subset=[determination_id_col]
     ).iterrows():
         taxon_id = str(int(float(row[determination_id_col])))
         species_name = row[species_col]
-        result = resolve_gbif_taxon_key_for_determination(
-            client,
-            taxon_id,
-            species_name=species_name,
-            sample_occurrence_id=sample_occurrence_by_taxon.get(taxon_id),
-            fgrained_ref=fgrained_ref,
-        )
+        try:
+            result = resolve_gbif_taxon_key_for_determination(
+                client,
+                taxon_id,
+                species_name=species_name,
+                sample_occurrence_id=sample_occurrence_by_taxon.get(taxon_id),
+                fgrained_ref=fgrained_ref,
+            )
+        except GbifKeyNotFoundError as exc:
+            not_found_errors.append(str(exc))
+            continue
         resolution_results.append(result)
         taxon_to_gbif[taxon_id] = result.gbif_taxon_key
         taxon_to_source[taxon_id] = result.resolution_source
@@ -431,6 +593,38 @@ def resolve_gbif_taxon_keys_from_dataframe(
             resolution_results, issues_report_path, fgrained_ref
         )
     print_gbif_resolution_summary(resolution_results)
+
+    alignments = _mismatch_alignments_from_results(
+        resolution_results, trainable_df, species_col=species_col
+    )
+    if alignments:
+        print_gbif_mismatch_align_report(
+            alignments,
+            n_trainable_rows=len(trainable_df),
+            n_trainable_species=int(trainable_df[species_col].nunique()),
+        )
+        if issues_report_path is not None:
+            mismatch_path = (
+                Path(issues_report_path).parent / "gbif_key_mismatches.csv"
+            )
+            write_gbif_mismatch_report(alignments, mismatch_path)
+            print(f"- Wrote mismatch alignment report: {mismatch_path}", flush=True)
+
+    if not_found_errors:
+        print("\n## Missing GBIF keys (after all fallbacks)", flush=True)
+        print(f"- Taxa: {len(not_found_errors)}", flush=True)
+        for msg in not_found_errors:
+            print(f"  - {msg}", flush=True)
+        preview = "\n".join(f"  - {msg}" for msg in not_found_errors[:20])
+        more = (
+            f"\n  ... and {len(not_found_errors) - 20} more"
+            if len(not_found_errors) > 20
+            else ""
+        )
+        raise GbifKeyNotFoundError(
+            f"{len(not_found_errors)} taxon(s) missing GBIF keys after all "
+            f"fallbacks:\n{preview}{more}"
+        )
 
     out = trainable_df.copy()
     out["gbif_taxon_key"] = out[determination_id_col].apply(

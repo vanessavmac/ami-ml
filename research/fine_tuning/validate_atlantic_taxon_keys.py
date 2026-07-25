@@ -29,12 +29,12 @@ from atlantic_dataset_utils import (
     resolve_gbif_taxon_key_for_determination,
 )
 
-DEFAULT_DATA_DIR = "~/data/fine_tuning_data_atlantic"
+DEFAULT_DATA_DIR = "~/vanessa/data/fine_tuning_data_atlantic"
 DEFAULT_MANIFEST = f"{DEFAULT_DATA_DIR}/manifest.csv"
 DEFAULT_BRIDGE = f"{DEFAULT_DATA_DIR}/taxon_to_training_idx.json"
-DEFAULT_FGRAINED_LABELS = "~/data/ami_traps/insect_crops/fgrained_labels.json"
-DEFAULT_QUEBEC_MAP = "~/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
-DEFAULT_AMI_TRAPS_TEST_CSV = "~/data/fine_tuning_data/test.csv"
+DEFAULT_FGRAINED_LABELS = "~/vanessa/data/ami_traps/insect_crops/fgrained_labels.json"
+DEFAULT_QUEBEC_MAP = "~/vanessa/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
+DEFAULT_AMI_TRAPS_TEST_CSV = "~/vanessa/data/fine_tuning_data/test.csv"
 DEFAULT_IMAGES_SUBDIR = "atlantic_forestry"
 
 

@@ -14,14 +14,14 @@ import dotenv
 
 dotenv.load_dotenv()
 
-AMI_TRAPS_DATASET = os.getenv("AMI_TRAPS_DATASET", "~/data/ami_traps/insect_crops")
+AMI_TRAPS_DATASET = os.getenv("AMI_TRAPS_DATASET", "~/vanessa/data/ami_traps/insect_crops")
 FINE_TUNING_AMI_TRAPS_DATASET = os.getenv(
     "FINE_TUNING_UK_DENMARK_AMI_TRAPS_DATASET",
-    "~/data/fine_tuning_data/ami_traps",
+    "~/vanessa/data/fine_tuning_data/ami_traps",
 )
 SPECIES_EXCLUSION_LIST = os.getenv(
     "SPECIES_EXCLUSION_LIST",
-    "~/data/ami_traps/metadata/ami-traps_sp_missing_in_ami-gbif.pickle",
+    "~/vanessa/data/ami_traps/metadata/ami-traps_sp_missing_in_ami-gbif.pickle",
 )
 REGION_NAME = os.getenv("REGION_NAME", "NorthEasternAmerica")
 

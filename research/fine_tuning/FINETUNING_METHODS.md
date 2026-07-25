@@ -148,7 +148,7 @@ Runs four head-only fine-tuning jobs sequentially (`1e-3`, `5e-4`, `3e-4`, `1e-4
 
 | Output                  | Location                                                             | What to check during analysis                                                                                                                                                                 |
 | ----------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Loss / accuracy curves  | W&B → `vanessavaleriemac-mila/atlantic-forestry`                     | All four runs finished (`state != crashed`). `train_loss` vs `val_loss` gap — widening gap suggests overfitting. Compare best-epoch `val_loss` across LRs (this is the **selection** metric). |
+| Loss / accuracy curves  | W&B → `moth-ai/atlantic-forestry`                     | All four runs finished (`state != crashed`). `train_loss` vs `val_loss` gap — widening gap suggests overfitting. Compare best-epoch `val_loss` across LRs (this is the **selection** metric). |
 | Best checkpoint per run | `{ATLANTIC_DATA_DIR}/checkpoints/resnet50_{timestamp}_checkpoint.pt` | Metadata `val_loss` and `epoch` match the W&B minimum. Ignore end-of-run `test_accuracy` in training logs — it uses last-epoch weights, not the saved checkpoint.                             |
 | W&B model artifact      | Logged at end of each run                                            | Reporting script downloads these; confirm one `model` artifact per run.                                                                                                                       |
 | Console output          | Terminal                                                             | Early-stop message and per-epoch `val_loss`; note which LR stopped earliest.                                                                                                                  |
@@ -161,15 +161,15 @@ After all runs finish and W&B has synced:
 
 ```bash
 python research/fine_tuning/report_finetuning_results.py \
-  --wandb-entity vanessavaleriemac-mila \
+  --wandb-entity moth-ai \
   --wandb-project atlantic-forestry \
   --run-name-suffix _30ep \
-  --overlap-table-csv /home/debian/vanessa/data/fine_tuning_data_atlantic/overlap_analysis/species_overlap_table.csv
+  --overlap-table-csv ~/vanessa//data/fine_tuning_data_atlantic/overlap_analysis/species_overlap_table.csv
 ```
 
 The script (1) pulls best-epoch `val_loss` from W&B and ranks runs, (2) downloads each run's checkpoint artifact, (3) runs offline `evaluate_model` on the Quebec baseline and every fine-tuned checkpoint (`checkpoint=True`), and (4) runs `compare_evaluations` vs baseline using the overlap table.
 
-Default output directory: `~/data/fine_tuning_data_atlantic/eval/lr_sweep_30ep` (derived from `--run-name-suffix _30ep`).
+Default output directory: `~/vanessa/data/fine_tuning_data_atlantic/eval/lr_sweep_30ep` (derived from `--run-name-suffix _30ep`).
 
 **Produced:**
 
@@ -198,7 +198,7 @@ To rank runs before committing GPU time to offline eval:
 ```bash
 python research/fine_tuning/report_finetuning_results.py \
   --val-loss-only \
-  --wandb-entity vanessavaleriemac-mila \
+  --wandb-entity -moth-ai \
   --wandb-project atlantic-forestry \
   --run-name-suffix _30ep
 ```

@@ -132,15 +132,15 @@ def create_dataset_splits(
 if __name__ == "__main__":
 
     # create_dataset_splits(
-    #     data_dir="~/data/fine_tuning_data/ami_traps",
+    #     data_dir="~/vanessa/data/fine_tuning_data/ami_traps",
     #     train_size=0.0,
     #     val_size=0.0,
     #     test_size=1.0,
     # )
 
     create_dataset_splits(
-        data_dir="~/data/fine_tuning_data_atlantic/atlantic_forestry",
-        splits_output_dir="~/data/fine_tuning_data_atlantic",
+        data_dir="~/vanessa/data/fine_tuning_data_atlantic/atlantic_forestry",
+        splits_output_dir="~/vanessa/data/fine_tuning_data_atlantic",
         train_size=0.85,
         val_size=0.15,
         test_size=0.0,

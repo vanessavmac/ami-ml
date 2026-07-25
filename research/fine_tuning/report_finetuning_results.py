@@ -27,31 +27,31 @@ if str(REPO_ROOT) not in sys.path:
 
 from research.fine_tuning.evaluation import compare_evaluations, evaluate_model
 
-DEFAULT_WANDB_ENTITY = "vanessavaleriemac-mila"
+DEFAULT_WANDB_ENTITY = "moth-ai"
 DEFAULT_WANDB_PROJECT = "atlantic-forestry"
 DEFAULT_RUN_NAME_PREFIX = "atlantic-forestry_lr"
 DEFAULT_SWEEP_SUFFIX = "_30ep"
 DEFAULT_EXPECTED_LRS = ("1e-3", "5e-4", "3e-4", "1e-4")
 DEFAULT_BASELINE_MODEL = (
-    "~/data/models/moths_quebecvermont_resnet50_randaug_mixres_128_fev24.pth"
+    "~/vanessa/data/models/moths_quebecvermont_resnet50_randaug_mixres_128_fev24.pth"
 )
-DEFAULT_OUTPUT_DIR = "~/data/fine_tuning_data_atlantic/eval/lr_sweep"
-DEFAULT_DATA_DIR = "~/data/fine_tuning_data"
+DEFAULT_OUTPUT_DIR = "~/vanessa/data/fine_tuning_data_atlantic/eval/lr_sweep"
+DEFAULT_DATA_DIR = "~/vanessa/data/fine_tuning_data"
 DEFAULT_TEST_WEBDATASET = (
-    "~/data/fine_tuning_data/webdataset/test/test-{000000..000003}.tar"
+    "~/vanessa/data/fine_tuning_data/webdataset/test/test-{000000..000003}.tar"
 )
-DEFAULT_CATEGORY_MAP = "~/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
+DEFAULT_CATEGORY_MAP = "~/vanessa/data/models/quebec-vermont_moth-category-map_19Jan2023.json"
 DEFAULT_OVERLAP_TABLE = (
-    "~/data/fine_tuning_data_atlantic/overlap_analysis/species_overlap_table.csv"
+    "~/vanessa/data/fine_tuning_data_atlantic/overlap_analysis/species_overlap_table.csv"
 )
 DEFAULT_ATLANTIC_COUNTS = (
-    "~/data/fine_tuning_data_atlantic/overlap_analysis/species_counts_atlantic.csv"
+    "~/vanessa/data/fine_tuning_data_atlantic/overlap_analysis/species_counts_atlantic.csv"
 )
 DEFAULT_SPLIT_SUMMARY = (
-    "~/data/fine_tuning_data_atlantic/split_analysis/species_split_summary.json"
+    "~/vanessa/data/fine_tuning_data_atlantic/split_analysis/species_split_summary.json"
 )
 DEFAULT_SPLIT_DISTRIBUTION = (
-    "~/data/fine_tuning_data_atlantic/split_analysis/species_split_distribution.csv"
+    "~/vanessa/data/fine_tuning_data_atlantic/split_analysis/species_split_distribution.csv"
 )
 TOP_ATLANTIC_SPECIES_K = 10
 AMI_TRAPS_ONLY_HIGHLIGHT_K = 5

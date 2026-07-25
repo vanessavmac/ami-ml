@@ -70,10 +70,11 @@ def _create_samples(
 
         filename = row["filename"]
         image = _get_image(dataset_dir / images_subdir / taxon_key / filename)
-        label = category_map.get(taxon_key, None)
-        if not label:
+        # Use `is None` — class index 0 is a valid Quebec label.
+        label = category_map.get(taxon_key)
+        if label is None:
             print(f"Label not found for taxon key {taxon_key}", flush=True)
-        if image and label:
+        elif image is not None:
             sample = {"__key__": Path(filename).stem, "jpg": image, "cls": label}
             yield sample
 
@@ -147,11 +148,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert ML dataset to WebDataset.")
     parser.add_argument(
         "--fine-tuning-data-dir",
-        default="~/data/fine_tuning_data",
+        default="~/vanessa/data/fine_tuning_data",
     )
     parser.add_argument(
         "--category-map-f",
-        default="~/data/fine_tuning_data/taxon_to_quebec_idx.json",
+        default="~/vanessa/data/fine_tuning_data/taxon_to_quebec_idx.json",
     )
     parser.add_argument(
         "--images-subdir",
