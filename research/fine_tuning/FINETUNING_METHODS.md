@@ -21,7 +21,7 @@ flowchart TD
   subgraph selection [Model selection - Atlantic val only]
     Train[Atlantic train shards]
     Val[Atlantic val shards]
-    Train --> Model[ResNet50 frozen backbone + trainable fc]
+    Train --> Model[ResNet50 last stages + trainable fc]
     Model --> ValLoss[val_loss minimum]
     ValLoss --> Checkpoint[Best checkpoint saved]
   end
@@ -31,13 +31,16 @@ flowchart TD
   end
 ```
 
-## Head-only fine-tuning
+## Partial backbone fine-tuning
 
-Atlantic Forestry has relatively few images. To limit overfitting and catastrophic forgetting, freeze the ResNet50 backbone and train only the classification head (`fc` layer, 3107 outputs).
+Atlantic Forestry has ~28k training images — enough to adapt the last ResNet stages without full end-to-end fine-tuning. Freeze early backbone stages (`conv1`, `layer1`, `layer2`) and train the classification head plus the final residual stage(s).
 
 1. Load Quebec weights with `--num_classes 3107`.
-2. Pass `--freeze_backbone True` (only `fc` parameters receive gradients).
-3. Keep `--mixed_resolution_data_aug True` (matches original Quebec training).
+2. Pass `--freeze_backbone True`. Optionally add `--unfreeze_backbone_layers layer4` (or `layer3,layer4`); omit it for head-only. The `fc` head is always trainable; named stages are additionally unfrozen.
+3. Use discriminative LR via `--backbone_lr_scale 0.1`: head at `--learning_rate`, unfrozen backbone at `0.1 × learning_rate`.
+4. Keep `--mixed_resolution_data_aug True` (matches original Quebec training).
+
+**Why these stages:** In timm ResNet50 (`conv1/bn1` → `layer1..layer4` → `fc`), head-only is the safest baseline; `layer4` holds the most task-specific features (3 bottleneck blocks); `layer3+layer4` adds capacity when the dataset supports it. Earlier stages stay frozen to limit forgetting on the 3107-class head. Pick the depth by Atlantic `val_loss`.
 
 ## Metrics at every stage
 
@@ -85,7 +88,7 @@ Use `species_overlap_table.csv` from overlap analysis (README step 1):
 
 | Output                      | Location                                                              | What to check                                                                   |
 | --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Loss / accuracy curves      | W&B project `atlantic-forestry`, e.g. `atlantic-forestry_lr1e-3_30ep` | `train_loss` vs `val_loss` divergence; compare LR runs on best-epoch `val_loss` |
+| Loss / accuracy curves      | W&B project `atlantic-forestry`, e.g. `atlantic-forestry_lr5e-4_layer4_100ep` | `train_loss` vs `val_loss` divergence; compare LR runs on best-epoch `val_loss` |
 | SLURM stdout (cluster only) | `fine_tune_*_%j.out`                                                  | Per-epoch metrics + early-stop message                                          |
 | Best checkpoint             | `{ATLANTIC_DATA_DIR}/checkpoints/resnet50_{timestamp}_checkpoint.pt`  | `model_state_dict`, `epoch`, `train_loss`, `val_loss`                           |
 | W&B model artifact          | Logged at end of training                                             | Same checkpoint file                                                            |
@@ -116,7 +119,7 @@ eval/comparison_{run_name}/
 
 ## Experiment workflow
 
-Train four learning rates on the workstation, then run the reporting script for Atlantic val model selection and AMI-Traps analysis.
+Train five learning rates × three unfreeze depths on the workstation, then run the reporting script for Atlantic val model selection and AMI-Traps analysis.
 
 ```mermaid
 flowchart LR
@@ -142,16 +145,16 @@ See [Running training](#running-training) for commands, outputs, and analysis ch
 sh research/fine_tuning/learning_rate_sweep.sh
 ```
 
-Runs four head-only fine-tuning jobs sequentially (`1e-3`, `5e-4`, `3e-4`, `1e-4`; 30 epochs, early stopping 8). Each job loads Quebec weights, trains on Atlantic train/val shards, and logs to W&B project `atlantic-forestry` as `atlantic-forestry_lr{LR}_30ep`.
+Runs fifteen fine-tuning jobs sequentially: five head LRs (`1e-3`, `5e-4`, `3e-4`, `1e-4`, `5e-5`) × three unfreeze depths (`fc` only, `layer4`, `layer3,layer4`); 100-epoch ceiling, early stopping 15, 5-epoch warmup; backbone LR = `0.1 ×` head LR when stages are unfrozen. Each job loads Quebec weights, trains on Atlantic train/val shards, and logs to W&B project `atlantic-forestry` as `atlantic-forestry_lr{LR}_{fc|layer4|layer3-layer4}_100ep`.
 
 **Produced:**
 
 | Output                  | Location                                                             | What to check during analysis                                                                                                                                                                 |
 | ----------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Loss / accuracy curves  | W&B → `moth-ai/atlantic-forestry`                     | All four runs finished (`state != crashed`). `train_loss` vs `val_loss` gap — widening gap suggests overfitting. Compare best-epoch `val_loss` across LRs (this is the **selection** metric). |
+| Loss / accuracy curves  | W&B → `moth-ai/atlantic-forestry`                     | All fifteen runs finished (`state != crashed`). `train_loss` vs `val_loss` gap — widening gap suggests overfitting. Compare best-epoch `val_loss` across LRs and unfreeze depths (this is the **selection** metric). |
 | Best checkpoint per run | `{ATLANTIC_DATA_DIR}/checkpoints/resnet50_{timestamp}_checkpoint.pt` | Metadata `val_loss` and `epoch` match the W&B minimum. Ignore end-of-run `test_accuracy` in training logs — it uses last-epoch weights, not the saved checkpoint.                             |
 | W&B model artifact      | Logged at end of each run                                            | Reporting script downloads these; confirm one `model` artifact per run.                                                                                                                       |
-| Console output          | Terminal                                                             | Early-stop message and per-epoch `val_loss`; note which LR stopped earliest.                                                                                                                  |
+| Console output          | Terminal                                                             | Early-stop message and per-epoch `val_loss`; note which LR / unfreeze depth stopped earliest.                                                                                                  |
 
 **Selection rule:** lowest Atlantic `val_loss` at the best epoch wins. AMI-Traps metrics from training are informational only.
 
@@ -163,24 +166,24 @@ After all runs finish and W&B has synced:
 python research/fine_tuning/report_finetuning_results.py \
   --wandb-entity moth-ai \
   --wandb-project atlantic-forestry \
-  --run-name-suffix _30ep \
+  --run-name-suffix _100ep \
   --overlap-table-csv ~/vanessa//data/fine_tuning_data_atlantic/overlap_analysis/species_overlap_table.csv
 ```
 
 The script (1) pulls best-epoch `val_loss` from W&B and ranks runs, (2) downloads each run's checkpoint artifact, (3) runs offline `evaluate_model` on the Quebec baseline and every fine-tuned checkpoint (`checkpoint=True`), and (4) runs `compare_evaluations` vs baseline using the overlap table.
 
-Default output directory: `~/vanessa/data/fine_tuning_data_atlantic/eval/lr_sweep_30ep` (derived from `--run-name-suffix _30ep`).
+Default output directory: `~/vanessa/data/fine_tuning_data_atlantic/eval/lr_sweep_100ep` (derived from `--run-name-suffix _100ep`).
 
 **Produced:**
 
-| Output                          | Location                                    | What to check during analysis                                                                                                                  |
-| ------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `val_loss_summary.csv` / `.md`  | `eval/lr_sweep_30ep/`                       | Ranked runs by `best_val_loss`; top row = selected model. Confirm all four LRs present (script warns on missing runs).                         |
-| `wandb_checkpoints/{run_name}/` | same                                        | Downloaded `.pt` files used for offline eval — verify W&B `val_loss` matches checkpoint metadata (script warns on mismatch > 1e-4).            |
-| `baseline/summary.json`         | `eval/lr_sweep_30ep/baseline/`              | Quebec micro/macro top-1 on AMI-Traps — reference for all deltas.                                                                              |
-| `{run_name}/summary.json`       | `eval/lr_sweep_30ep/{run_name}/`            | Per-run AMI-Traps micro/macro top-1. **Reporting only** — do not use to pick the LR (use `val_loss_summary` for that).                         |
-| `comparison_{run_name}/`        | `eval/lr_sweep_30ep/comparison_{run_name}/` | `per_species_comparison.csv` — overlap species gains/losses; `ami_traps_only_comparison.csv` — forgetting on species not in Atlantic training. |
-| `sweep_eval_summary.csv`        | `eval/lr_sweep_30ep/`                       | Side-by-side AMI-Traps metrics and `delta_*_vs_baseline` for all runs.                                                                         |
+| Output                          | Location                                     | What to check during analysis                                                                                                                  |
+| ------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `val_loss_summary.csv` / `.md`  | `eval/lr_sweep_100ep/`                       | Ranked runs by `best_val_loss`; top row = selected model. Confirm all fifteen LR × unfreeze combinations present (script warns on missing runs). |
+| `wandb_checkpoints/{run_name}/` | same                                         | Downloaded `.pt` files used for offline eval — verify W&B `val_loss` matches checkpoint metadata (script warns on mismatch > 1e-4).            |
+| `baseline/summary.json`         | `eval/lr_sweep_100ep/baseline/`              | Quebec micro/macro top-1 on AMI-Traps — reference for all deltas.                                                                              |
+| `{run_name}/summary.json`       | `eval/lr_sweep_100ep/{run_name}/`            | Per-run AMI-Traps micro/macro top-1. **Reporting only** — do not use to pick the LR (use `val_loss_summary` for that).                         |
+| `comparison_{run_name}/`        | `eval/lr_sweep_100ep/comparison_{run_name}/` | `per_species_comparison.csv` — overlap species gains/losses; `ami_traps_only_comparison.csv` — forgetting on species not in Atlantic training. |
+| `sweep_eval_summary.csv`        | `eval/lr_sweep_100ep/`                       | Side-by-side AMI-Traps metrics and `delta_*_vs_baseline` for all runs.                                                                         |
 
 **Analysis checklist:**
 
@@ -200,7 +203,7 @@ python research/fine_tuning/report_finetuning_results.py \
   --val-loss-only \
   --wandb-entity -moth-ai \
   --wandb-project atlantic-forestry \
-  --run-name-suffix _30ep
+  --run-name-suffix _100ep
 ```
 
 ## `train-model` parameter reference
@@ -212,18 +215,20 @@ python research/fine_tuning/report_finetuning_results.py \
 | `--existing_weights`                      | Quebec `.pth`               | Starting checkpoint for `QuebecVermontMothSpeciesClassifierMixedResolution`  |
 | `--image_input_size 128`                  | fixed                       | `Resnet50ClassifierLowRes.input_size`; checkpoint name `mixres_128`          |
 | `--preprocess_mode torch`                 | fixed                       | ImageNet mean/std — matches inference transforms and `dataloader.py`         |
-| `--total_epochs 30`                       | LR sweep                    | Best checkpoints from 10-epoch sweep landed at epochs 8–9; 30 gives headroom |
-| `--early_stopping 8`                      | LR sweep                    | Proportional patience for longer sweep                                       |
-| `--warmup_epochs 2`                       | v0                          | Cosine scheduler warmup (`CosineLRScheduler` in `utils.py`)                  |
+| `--total_epochs 100`                      | LR sweep                    | Ceiling for partial-backbone fine-tuning; early stop usually finishes sooner |
+| `--early_stopping 15`                     | LR sweep                    | ~15% of budget; patience for noisier `layer3+layer4` val curves              |
+| `--warmup_epochs 5`                       | LR sweep                    | ~5% of schedule; softens AdamW into newly unfrozen backbone at peak LR       |
 | `--batch_size 16`                         | v0                          | Fits 2× RTX8000 with 3107-class head                                         |
-| `--learning_rate`                         | sweep                       | CLI default `0.001`; sweep `1e-3, 5e-4, 3e-4, 1e-4`                          |
+| `--learning_rate`                         | sweep                       | Head LR; sweep `1e-3, 5e-4, 3e-4, 1e-4, 5e-5` (backbone uses `backbone_lr_scale`) |
 | `--learning_rate_scheduler cosine`        | v0                          | Per-step cosine decay after warmup                                           |
 | `--optimizer_type adamw`                  | default                     | CLI default                                                                  |
 | `--weight_decay 1e-5`                     | default                     | CLI default                                                                  |
 | `--label_smoothing 0.1`                   | default                     | CLI default; regularization                                                  |
 | `--loss_function_type cross_entropy`      | default                     | Standard classification                                                      |
 | `--mixed_resolution_data_aug True`        | v0                          | Original Quebec training; see `dataloader._mixed_resolution`                 |
-| `--freeze_backbone True`                  | v0                          | Head-only fine-tuning for small dataset                                      |
+| `--freeze_backbone True`                  | v0                          | Freeze early stages; exempt `fc` + `--unfreeze_backbone_layers`              |
+| `--unfreeze_backbone_layers`              | sweep                       | empty (fc only), `layer4`, or `layer3,layer4`                                |
+| `--backbone_lr_scale 0.1`                 | v0                          | Discriminative LR: backbone at `0.1 × --learning_rate`, head at full LR      |
 | `--random_seed 42`                        | default                     | Reproducibility                                                              |
 | `--train_webdataset` / `--val_webdataset` | Atlantic shards             | README step 6                                                                |
 | `--test_webdataset`                       | AMI-Traps test shards       | Held-out benchmark (README AMI-Traps prep)                                   |

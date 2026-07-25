@@ -208,6 +208,22 @@ COMMANDS_HELP = {TRAIN_CMD: "Train a classification model"}
     help="Freeze all layers except the classification head (fc) during fine-tuning.",
 )
 @click.option(
+    "--unfreeze_backbone_layers",
+    type=str,
+    default=None,
+    help="Comma-separated backbone stage names to keep trainable when "
+    "--freeze_backbone is True (e.g. 'layer4' or 'layer3,layer4'). "
+    "The fc head is always trainable.",
+)
+@click.option(
+    "--backbone_lr_scale",
+    type=float,
+    default=0.1,
+    help="Learning rate multiplier for unfrozen backbone layers relative to "
+    "--learning_rate (discriminative LR). Head uses the full learning rate. "
+    "Only applied when backbone params are trainable.",
+)
+@click.option(
     "--model_save_directory",
     type=str,
     required=True,
@@ -254,12 +270,22 @@ def train_model_command(
     label_smoothing: float,
     mixed_resolution_data_aug: bool,
     freeze_backbone: bool,
+    unfreeze_backbone_layers: Optional[str],
+    backbone_lr_scale: float,
     model_save_directory: str,
     wandb_entity: Optional[str],
     wandb_project: Optional[str],
     wandb_run_name: Optional[str],
 ):
     from src.classification.train import train_model
+
+    unfreeze_layers = None
+    if unfreeze_backbone_layers:
+        unfreeze_layers = [
+            name.strip()
+            for name in unfreeze_backbone_layers.split(",")
+            if name.strip()
+        ]
 
     train_model(
         random_seed=random_seed,
@@ -284,6 +310,8 @@ def train_model_command(
         label_smoothing=label_smoothing,
         mixed_resolution_data_aug=mixed_resolution_data_aug,
         freeze_backbone_layers=freeze_backbone,
+        unfreeze_backbone_layers=unfreeze_layers,
+        backbone_lr_scale=backbone_lr_scale,
         model_save_directory=model_save_directory,
         wandb_entity=wandb_entity,
         wandb_project=wandb_project,

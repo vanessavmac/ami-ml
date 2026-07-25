@@ -164,6 +164,8 @@ def train_model(
     label_smoothing: float,
     mixed_resolution_data_aug: bool,
     freeze_backbone_layers: bool,
+    unfreeze_backbone_layers: Optional[list[str]],
+    backbone_lr_scale: float,
     model_save_directory: str,
     wandb_entity: Optional[str],
     wandb_project: Optional[str],
@@ -179,7 +181,7 @@ def train_model(
     print(f"The available device is {device}.")
     model = build_model(device, model_type, num_classes, existing_weights)
     if freeze_backbone_layers:
-        freeze_backbone(model)
+        freeze_backbone(model, unfreeze_backbone_layers)
 
     # Setup dataloaders
     train_dataloader = build_webdataset_pipeline(
@@ -204,7 +206,13 @@ def train_model(
     )
 
     # Other training ingredients
-    optimizer = get_optimizer(optimizer_type, model, learning_rate, weight_decay)
+    optimizer = get_optimizer(
+        optimizer_type,
+        model,
+        learning_rate,
+        weight_decay,
+        backbone_lr_scale=backbone_lr_scale,
+    )
     if learning_rate_scheduler:
         train_data_length = get_webdataset_length(train_webdataset)
         steps_per_epoch = int((train_data_length - 1) / batch_size) + 1
@@ -246,6 +254,8 @@ def train_model(
             "loss_function_type": loss_function_type,
             "label_smoothing": label_smoothing,
             "freeze_backbone": freeze_backbone_layers,
+            "unfreeze_backbone_layers": unfreeze_backbone_layers,
+            "backbone_lr_scale": backbone_lr_scale,
             "model_save_directory": model_save_directory,
         }
         wandb.init(

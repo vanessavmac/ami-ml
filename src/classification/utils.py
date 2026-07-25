@@ -41,20 +41,56 @@ def get_optimizer(
     learning_rate: float,
     weight_decay: float,
     momentum: float = 0.9,
+    backbone_lr_scale: float = 1.0,
 ) -> torch.optim.Optimizer:
-    """Optimizer definitions"""
+    """Optimizer definitions.
+
+    When ``backbone_lr_scale != 1.0`` (or any backbone params are trainable),
+    builds two param groups: the classification head (``fc``) at
+    ``learning_rate`` and remaining trainable backbone params at
+    ``learning_rate * backbone_lr_scale``. Head-only training falls back to a
+    single param group.
+    """
+
+    base_model = _unwrap_model(model)
+    head_params = []
+    backbone_params = []
+    for name, param in base_model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name.startswith("fc.") or name == "fc":
+            head_params.append(param)
+        else:
+            backbone_params.append(param)
+
+    if backbone_params and backbone_lr_scale != 1.0:
+        param_groups = [
+            {"params": head_params, "lr": learning_rate, "weight_decay": weight_decay},
+            {
+                "params": backbone_params,
+                "lr": learning_rate * backbone_lr_scale,
+                "weight_decay": weight_decay,
+            },
+        ]
+        print(
+            f"Discriminative LR: head={learning_rate}, "
+            f"backbone={learning_rate * backbone_lr_scale} "
+            f"(scale={backbone_lr_scale}).",
+            flush=True,
+        )
+    else:
+        param_groups = [
+            {
+                "params": [p for p in model.parameters() if p.requires_grad],
+                "lr": learning_rate,
+                "weight_decay": weight_decay,
+            }
+        ]
 
     if optimizer_type == "adamw":
-        return torch.optim.AdamW(
-            model.parameters(), lr=learning_rate, weight_decay=weight_decay
-        )
+        return torch.optim.AdamW(param_groups)
     elif optimizer_type == "sgd":
-        return torch.optim.SGD(
-            model.parameters(),
-            lr=learning_rate,
-            momentum=momentum,
-            weight_decay=weight_decay,
-        )
+        return torch.optim.SGD(param_groups, momentum=momentum)
     else:
         raise RuntimeError(f"{optimizer_type} optimizer is not implemented.")
 
@@ -126,8 +162,15 @@ def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
-def freeze_backbone(model: torch.nn.Module) -> int:
-    """Freeze all parameters except the classification head (fc layer).
+def freeze_backbone(
+    model: torch.nn.Module,
+    unfreeze_layers: tp.Optional[list[str]] = None,
+) -> int:
+    """Freeze all parameters except the classification head and optional stages.
+
+    Always keeps ``fc`` trainable. When ``unfreeze_layers`` is provided (e.g.
+    ``["layer4"]`` or ``["layer3", "layer4"]``), those named modules are also
+    unfrozen. Default ``None`` preserves head-only fine-tuning.
 
     Returns the number of trainable parameters.
     """
@@ -142,10 +185,22 @@ def freeze_backbone(model: torch.nn.Module) -> int:
     for param in base_model.fc.parameters():
         param.requires_grad = True
 
+    unfrozen = list(unfreeze_layers) if unfreeze_layers else []
+    for layer_name in unfrozen:
+        if not hasattr(base_model, layer_name):
+            raise RuntimeError(
+                f"Cannot unfreeze '{layer_name}': model has no such attribute. "
+                f"Valid ResNet stages are typically layer1–layer4."
+            )
+        for param in getattr(base_model, layer_name).parameters():
+            param.requires_grad = True
+
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
+    stages = ", ".join(["fc"] + unfrozen)
     print(
-        f"Frozen backbone: {trainable:,} trainable / {total:,} total parameters.",
+        f"Frozen backbone (trainable: {stages}): "
+        f"{trainable:,} trainable / {total:,} total parameters.",
         flush=True,
     )
     return trainable
