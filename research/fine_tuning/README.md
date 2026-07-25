@@ -83,28 +83,32 @@ flowchart TD
 
 **VERY IMPORTANT NOTE: for the example with** `Alcis porcelaria` **we ended up excluding it anyway from analysis using** `ATLANTIC_DATASET_EXCLUDED_SPECIES`**.** Same exclusion set also drops sparse Antenna/fgrained conflicts (`Macaria notata`, `Haploa clymene`, `Eucosma tomonana`) and the legacy synonym stub `Speranza pustularia` (1 row; use `Macaria pustularia` instead). Full rationale for each skipped species:
 
-**Alcis porcelaria** — Antenna stub with no usable GBIF key  
-- Atlantic points at Antenna taxon **11553**, which returns `rank: "Unknown"` and `gbif_taxon_key: null`.  
-- The accepted name on GBIF is `Protoboarmia porcelaria` (key `4302230`), as a separate Antenna taxon, but they aren’t linked in the API.  
+**Alcis porcelaria** — Antenna stub with no usable GBIF key
+
+- Atlantic points at Antenna taxon **11553**, which returns `rank: "Unknown"` and `gbif_taxon_key: null`.
+- The accepted name on GBIF is `Protoboarmia porcelaria` (key `4302230`), as a separate Antenna taxon, but they aren’t linked in the API.
 - Only **1 sample**, still in the Quebec map (so normal filters wouldn’t drop it), and no AMI-Traps crop under either name with a valid key. Excluded to unblock the pipeline rather than special-case synonym bridging.
 
-**Speranza pustularia** — Legacy synonym stub, 1 row  
-- Same class of problem as above: Antenna stub with no GBIF key, single sample.  
+**Speranza pustularia** — Legacy synonym stub, 1 row
+
+- Same class of problem as above: Antenna stub with no GBIF key, single sample.
 - Prefer training under the accepted synonym **`Macaria pustularia`** instead of keeping this name.
 
-**Macaria notata** — Sparse Antenna vs fgrained GBIF key conflict (≤2 rows)  
-- Antenna and AMI-Traps/`fgrained_labels` disagree on the GBIF key.  
+**Macaria notata** — Sparse Antenna vs fgrained GBIF key conflict (≤2 rows)
+
+- Antenna and AMI-Traps/`fgrained_labels` disagree on the GBIF key.
 - Too few rows to justify remapping IDs; dropped instead.
 
-**Haploa clymene** — Key conflict **plus** synonym → wrong accepted species  
-- Same sparse Antenna/fgrained key mismatch (≤2 rows).  
+**Haploa clymene** — Key conflict **plus** synonym → wrong accepted species
+
+- Same sparse Antenna/fgrained key mismatch (≤2 rows).
 - Extra issue: Antenna’s synonym path maps to a **different accepted species** (`colona` vs `clymene`), so remapping would risk training under the wrong label. Prefer exclude over ID remapping.
 
-**Eucosma tomonana** — Sparse Antenna vs fgrained key conflict (≤2 rows)  
+**Eucosma tomonana** — Sparse Antenna vs fgrained key conflict (≤2 rows)
+
 - Same rationale as `Macaria notata`: Antenna key ≠ fgrained key, few rows, exclude rather than remap.
 
 Shared policy for the three conflict species: keep AMI-Traps/`fgrained` as the frozen benchmark; for tiny mismatch cases, drop Atlantic rows instead of remapping IDs.
-
 
 **Mismatch policy (overlap species kept in training):** If Antenna returns a non-null GBIF key that disagrees with `fgrained_labels`, use the **fgrained** key for folder/ID alignment (`resolution_source=fgrained_mismatch_align`). Example: `Idia aemula` Antenna `11935305` is a GBIF synonym whose accepted key is fgrained `9407200`. Do **not** remap AMI-Traps to Antenna keys for these cases — AMI-Traps is the frozen held-out benchmark.
 
@@ -161,17 +165,22 @@ Optional flags: `--skip-download`, `--antenna-api-token`, `--antenna-taxa-cache-
 ```python
 from research.fine_tuning.create_dataset_splits import create_dataset_splits
 
+
 create_dataset_splits(
     data_dir="~/data/fine_tuning_data_atlantic/atlantic_forestry",
     splits_output_dir="~/data/fine_tuning_data_atlantic",
     train_size=0.85,
     val_size=0.15,
     test_size=0.0,
-    min_samples_per_class=1,
+    min_samples_per_class=5,
 )
 ```
 
 `taxonkey` in `train.csv` / `val.csv` is the GBIF folder name.
+
+```
+python research/fine_tuning/analyze_atlantic_split_distribution.py
+```
 
 #### 4. Taxon bridge for webdataset
 

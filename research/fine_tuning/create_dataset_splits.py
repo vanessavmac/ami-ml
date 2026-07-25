@@ -144,5 +144,5 @@ if __name__ == "__main__":
         train_size=0.85,
         val_size=0.15,
         test_size=0.0,
-        min_samples_per_class=1,
+        min_samples_per_class=5,
     )
